@@ -1,0 +1,391 @@
+#!/bin/bash
+
+#Kaleb Papesh 06/22/2016
+
+#script to setup supportkb with custom additions to files as well as additional files needed for supportkb.
+
+#================================================================================
+#help
+#================================================================================
+function help {
+    echo
+    echo -e '\t' "Setup SupportKB Script Help"
+    echo "-------------------------------------------------"
+    echo "This script is to be used after an upgrade for WordPress is applied"
+    echo "and something is broken or to setup a new SupportKB after the base"
+    echo "WordPress is installed."
+    echo
+    echo "How to use this script:"
+    echo -e '\t' "sudo ./setupsupportkb.sh -c configfile"
+    echo
+    exit 1
+}
+
+#================================================================================
+#check if user is root, if not, exit.
+#================================================================================
+if [[ $EUID -ne 0 ]]; then
+    echo "This script must be run as root." 1>&2
+    exit
+fi
+
+#==========================================================================================
+#check if there are any arguments provided
+#==========================================================================================
+if [ $# -eq 0 ]; then
+    help
+fi
+
+#================================================================================
+#handle args
+#================================================================================
+while getopts ":c:h" opt; do
+    case "$opt" in
+	c)
+	    configfile="$OPTARG"
+
+	    #check if config file is empty
+	    if [ ! -s "$configfile" ]; then
+		echo "No config file provided with the -c option!"
+		echo "Please provide a valid config file and re-run script!"
+		exit 1
+	    fi
+	    ;;
+	h)
+	    help
+	    exit 1
+	    ;;
+	\?)
+	    echo "Invalid option: -$OPTARG" >&2
+	    help
+	    exit 1
+	    ;;
+	:)
+	    echo "Option -$OPTARG requires an argument." >&2
+	    help
+	    exit 1
+	    ;;
+    esac
+done
+
+shift $((OPTIND-1))
+
+#================================================================================
+#settings file
+#================================================================================
+if [ ! -e $configfile ]; then
+    echo "No source file given!"
+    help
+    exit 1
+else
+    source "$configfile"
+fi
+
+#================================================================================
+#check for package dependancies
+#================================================================================
+echo
+echo "Checking dependancies..."
+
+if hash fromdos 2>/dev/null; then
+    echo "Fromdos installed. moving on..."
+else
+    echo "Fromdos does not exist. Installing..."
+    echo
+    aptitude -y install tofrodos
+fi
+
+#================================================================================
+#backup necessary files function
+#================================================================================
+function backupFiles {
+
+    #list files to backup in the variable below
+    
+    for file in $filesToBackup; do
+	
+	if [ ! -e $wordpressdir$file.bak ]; then
+	    echo
+	    echo "Making Backup of $file..."
+	    cp $wordpressdir$file{,.bak} && sleep 1
+	    chown www-data.www-data $wordpressdir$file.bak
+	    echo "Made Backup of $file."
+	elif [ -e $wordpressdir$file.bak ]; then
+	    makeanother=""
+	    while [ "$makeanother" == "" ]; do
+		echo
+		echo "Another $file.bak has been detected!"
+		read -p "Would you like to make another backup of this file? [y/n]: " makeanother
+		case $makeanother in
+		    
+		    "y"|"Y"|"yes"|"Yes")
+			cp $wordpressdir$file{,.bak} && sleep 1
+			chown www-data.www-data $wordpressdir$file.bak
+			echo "Successfully made another backup of $file.bak";;
+		    
+		    "n"|"N"|"no"|"No")
+			echo "Canceling backup of $file"
+		esac
+	    done
+	fi
+	done
+}
+
+#================================================================================
+#alter functions.php
+#================================================================================
+function functionsPHPAdd {
+    file=$wordpressdir"$(echo "$filesToBackup" | grep "functions.php")"
+
+    echo "altering the functions.php file"
+    echo
+    sed -i '/\/\/CUSTOM SECTION/,$d' $file
+    echo "$functionPHP" >> $file
+    echo "updated functions.php"
+    echo
+    fromdos $file
+}
+
+#================================================================================
+#alter wp-config.php
+#================================================================================
+function wpconfigPHPAdd {
+
+    file=$wordpressdir"$(echo "$filesToBackup" | grep "wp-config.php")"
+
+    if [ "$(grep -o "$wpconfigPHP" $file)" == "$wpconfigPHP" ]; then
+	echo
+	echo "the line"
+	echo
+	echo "$wpconfigPHP"
+	echo
+	echo "already exists. Ignoring and moving on..."
+	echo
+    else
+	$wpconfigPHP >> $file
+    fi
+        
+}
+
+#================================================================================
+#alter style css
+#================================================================================
+function styleCSSFindReplace {
+    
+    file=$wordpressdir"$(echo "$filesToBackup" | grep "style.css")"
+    
+    if [ "$(grep -o "$styleCSSPreReplace" $file)" == "$styleCSSPreReplace" ]; then
+	echo
+	echo "line already updated with"
+	echo
+	echo "$styleCSSPreReplace"
+	echo
+	echo "Ignoring and moving on..."
+	echo
+    else
+	echo "updating $file with $styleCSSPreReplace"
+	sed -i "s/$styleCSSPreFind/$styleCSSPreReplace/g" $file
+    fi
+
+    if [[ $(grep -oc "$styleCSSeeeFind" $file) > 0 ]]; then
+	echo "updating $file with $styleCSSeeeReplace"
+	sed -i "s/$styleCSSeeeFind/$styleCSSeeeReplace/g" $file
+    else
+	echo
+	echo "$file already updated with"
+	echo
+	echo "$styleCSSeeeReplace"
+	echo
+	echo "Ignoring and moving on..."
+	echo
+    fi
+}
+
+#================================================================================
+#alter dave's live search
+#================================================================================
+function daveLiveSearchFindReplace {
+    
+    file=$wordpressdir"$(echo "$filesToBackup" | grep "class-daves-wordpress-live-search-results.php")"
+    
+    if [ "$(grep -o "$daveLiveSearchReplace" $file)" == "$daveLiveSearchReplace" ]; then
+	echo
+	echo "line already updated with"
+	echo
+	echo "$daveLiveSearchReplace"
+	echo
+	echo "Ignoring and moving on..."
+	echo
+    else
+	echo "updating $file with $daveLiveSearchReplace"
+	sed -i "s/$daveLiveSearchFind/$daveLiveSearchReplace/g" $file
+    fi
+}
+
+#================================================================================
+#alter frontier standard post form
+#================================================================================
+function frontierStandardPostFormFindReplace {
+    
+    file=$wordpressdir"$(echo "$filesToBackup" | grep "frontier_post_form_standard.php")"
+    
+    if [ "$(grep -o "$frontierStandardPostFormReplace1" $file)" == "$frontierStandardPostFormReplace1" ]; then
+	echo
+	echo "line already updated with"
+	echo
+	echo "$frontierStandardPostFormReplace1"
+	echo
+	echo "Ignoring and moving on..."
+	echo
+    else
+	echo "updating $file with"
+	echo
+	echo "$frontierStandardPostFormReplace1"
+	sed -i "s~$frontierStandardPostFormFind1~$frontierStandardPostFormReplace1~g" $file
+    fi
+    
+    #Since we're just completely removing the line I'm checking to see if the line exists
+    if [ "$(grep -o "$frontierStandardPostFormFind2" $file)" == "$frontierStandardPostFormFind2" ]; then
+	echo
+	echo "The line"
+	echo
+	echo "$frontierStandardPostFormFind2"
+	echo
+	echo "was already removed from $file"
+	echo "Ignoring and moving on..."
+	echo
+    else
+	echo "removing line"
+	echo
+	echo "$frontierStandardPostFormFind2"
+	echo
+	echo "from $file"
+	sed -i "s~$frontierStandardPostFormFind2~$frontierStandardPostFormReplace2~g" $file
+    fi
+
+    if [ "$(grep -o "$frontierStandardPostFormReplace3" $file)" == "$frontierStandardPostFormReplaceCompare" ]; then
+	echo
+	echo "line already updated with"
+	echo
+	echo "$frontierStandardPostFormReplace3"
+	echo
+	echo "Ignoring and moving on..."
+	echo
+    else
+	echo "updating $file with"
+	echo
+	echo "$frontierStandardPostFormReplace3"
+	sed -i "s~$frontierStandardPostFormFind3~$frontierStandardPostFormReplace3~g" $file
+    fi
+
+    if [ "$(grep -o "$frontierStandardPostFormReplace4" $file)" == "$frontierStandardPostFormReplace4" ]; then
+	echo
+	echo "line already updated with"
+	echo
+	echo "$frontierStandardPostFormReplace4"
+	echo
+	echo "Ignoring and moving on..."
+	echo
+    else
+	echo "updating $file with"
+	echo
+	echo "$frontierStandardPostFormReplace4"
+	sed -i "s~$frontierStandardPostFormFind4~$frontierStandardPostFormReplace4~g" $file
+    fi
+}
+
+#================================================================================
+#alter frontier submit form
+#================================================================================
+function frontierSubmitFormFindReplace {
+    
+    file=$wordpressdir"$(echo "$filesToBackup" | grep "frontier-submit-form.php")"
+    
+    if [ "$(grep -o "$frontierSubmitFormReplace" $file)" == "$frontierSubmitFormReplace" ]; then
+	echo
+	echo "line already updated with"
+	echo
+	echo "$frontierSubmitFormReplace"
+	echo
+	echo "Ignoring and moving on..."
+	echo
+    else
+	echo "updating $file with $frontierSubmitFormReplace"
+	sed -i "s/$frontierSubmitFormFind/$frontierSubmitFormReplace/g" $file
+    fi
+}
+
+#================================================================================
+#alter frontier post util file
+#================================================================================
+function frontierPostUtilFindReplace {
+    
+    file=$wordpressdir"$(echo "$filesToBackup" | grep "frontier_post_util.php")"
+    
+    if [ "$(grep -o "$frontierPostUtilReplace1" $file)" == "$frontierPostUtilReplace1" ]; then
+	echo
+	echo "line already updated with"
+	echo
+	echo "$frontierPostUtilReplace1"
+	echo
+	echo "Ignoring and moving on..."
+	echo
+    else
+	echo "updating $file with $frontierPostUtilReplace1"
+	sed -i "s/$frontierPostUtilFind1/$frontierPostUtilReplace1/g" $file
+    fi
+
+    if [ "$(grep -o "$frontierPostUtilReplace2" $file)" == "$frontierPostUtilReplace2" ]; then
+	echo
+	echo "line already updated with"
+	echo
+	echo "$frontierPostUtilReplace2"
+	echo
+	echo "Ignoring and moving on..."
+	echo
+    else
+	echo "updating $file with $frontierPostUtilReplace2"
+	sed -i "s~$frontierPostUtilFind2~$frontierPostUtilReplace2~g" $file
+    fi
+}
+
+#================================================================================
+#Add Files
+#================================================================================
+function addfiles {
+
+    for file in $filesToAdd; do
+	wget -O $wordpressdir$filesToAddDir$file https://raw.githubusercontent.com/kpapesh/setupsupportkbfiles/master/$file
+    done
+}
+
+#================================================================================
+#Chown all the files we've backed up and altered
+#================================================================================
+function chownfiles {
+
+    for file in $filesToBackup; do
+	chown www-data.www-data $wordpressdir$file
+	echo "Applied proper ownership to $file."
+    done
+
+    for file in $filesToAdd; do
+	chown www-data.www-data $wordpressdir$filesToAddDir$file
+	echo "Applied proper ownership to $file."
+    done
+}
+
+
+#================================================================================
+#Main Loop
+#================================================================================
+backupFiles
+functionsPHPAdd
+wpconfigPHPAdd
+styleCSSFindReplace
+daveLiveSearchFindReplace
+frontierStandardPostFormFindReplace
+frontierSubmitFormFindReplace
+frontierPostUtilFindReplace
+addfiles
+chownfiles
